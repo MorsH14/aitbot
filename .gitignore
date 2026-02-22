@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Bot outputs
+logs/*.log
+logs/*.csv
+logs/*.json
+logs/*.png
+data/historical/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+node_modules
