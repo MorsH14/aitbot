@@ -13,7 +13,7 @@
 import { program }     from 'commander';
 import CFG             from './config.js';
 import { setupLogging, TradeJournal } from './src/logging/tradeLogger.js';
-import { MetaApiDataFetcher, MockDataFetcher } from './src/data/fetcher.js';
+import { DerivDataFetcher, MockDataFetcher } from './src/data/fetcher.js';
 import { NewsFilter }  from './src/data/newsFilter.js';
 import { addAllIndicators } from './src/indicators/technical.js';
 import { SignalGenerator, formatSignal } from './src/strategy/signals.js';
@@ -42,7 +42,7 @@ const logger = setupLogging();
 logger.info('='.repeat(60));
 logger.info(`  XAU/USD Scalping Bot v${BOT_VERSION}`);
 logger.info(`  Mode: ${opts.backtest ? 'BACKTEST' : (opts.mock ? 'PAPER (mock)' : CFG.broker.accountType.toUpperCase())}`);
-logger.info(`  Account: ${CFG.broker.metaapiAccountId || 'not configured'}`);
+logger.info(`  Account: ${CFG.broker.accountType.toUpperCase()} (app_id: ${CFG.broker.appId})`);
 logger.info('='.repeat(60));
 
 if (opts.backtest) {
@@ -55,14 +55,14 @@ if (opts.backtest) {
 
 async function runLive(mock = false) {
   // Validate credentials for live/paper mode
-  if (!mock && (!CFG.broker.metaapiToken || !CFG.broker.metaapiAccountId)) {
-    logger.error('METAAPI_TOKEN and METAAPI_ACCOUNT_ID must be set in .env');
+  if (!mock && !CFG.broker.derivToken) {
+    logger.error('DERIV_TOKEN must be set in .env');
     logger.error('Run with --backtest --mock to test without credentials.');
     process.exit(1);
   }
 
   // Initialise fetcher (MetaAPI connection or mock)
-  const fetcher = mock ? new MockDataFetcher() : new MetaApiDataFetcher();
+  const fetcher = mock ? new MockDataFetcher() : new DerivDataFetcher();
   await fetcher.init();  // Establishes MT5 connection (or no-op for mock)
 
   const newsFilter = new NewsFilter();
@@ -76,7 +76,7 @@ async function runLive(mock = false) {
 
   const riskMgr  = new RiskManager(initialEquity);
   // Pass the MetaAPI connection to the executor for order placement
-  const executor = new TradeExecutor(riskMgr, fetcher._conn ?? null);
+  const executor = new TradeExecutor(riskMgr, fetcher._client ?? null);
 
   logger.info(`Bot running. Loop interval: ${LOOP_INTERVAL_MS / 1000}s`);
 

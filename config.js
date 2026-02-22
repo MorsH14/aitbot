@@ -1,7 +1,7 @@
 /**
  * config.js — Centralised configuration for the XAU/USD Scalping Bot
  * ===================================================================
- * Broker: Exness MT5 (demo/live) via MetaAPI cloud
+ * Broker: Deriv.com (free WebSocket API, works in Nigeria & worldwide)
  * Signal TF: M5 | Trend TF: M15
  *
  * Usage:
@@ -10,37 +10,40 @@
 
 import 'dotenv/config';
 
-// ── Broker / MetaAPI ─────────────────────────────────────────────────────────
+// ── Broker / Deriv ────────────────────────────────────────────────────────────
 
 const broker = {
-  // MetaAPI token — from https://metaapi.cloud → API Tokens → Generate
-  metaapiToken     : process.env.METAAPI_TOKEN      ?? '',
+  // Deriv app_id — use '1089' for demo/testing
+  // Register your own free app at https://api.deriv.com/ for production
+  appId : process.env.DERIV_APP_ID ?? '1089',
 
-  // MetaAPI account ID — the UUID shown on your account card in MetaAPI dashboard
-  metaapiAccountId : process.env.METAAPI_ACCOUNT_ID ?? '',
+  // Deriv API token — from https://app.deriv.com/ → Account Settings → Security → API Token
+  // Create a token with "Trade" and "Read" scope
+  derivToken : process.env.DERIV_TOKEN ?? '',
 
-  // 'demo' or 'live' (informational — actual mode is set when you added account to MetaAPI)
+  // 'demo' or 'real' — informational; Deriv uses the token's account type automatically
   accountType : process.env.ACCOUNT_TYPE ?? 'demo',
 };
 
 // ── Instrument ────────────────────────────────────────────────────────────────
 
 const instrument = {
-  // MT5 symbol — Exness uses 'XAUUSDm' for standard accounts, 'XAUUSD' for pro accounts
-  // Check your MT5 Market Watch panel for the exact name
-  symbol : process.env.SYMBOL ?? 'XAUUSDm',
+  // Deriv symbol for XAU/USD — always 'frxXAUUSD'
+  symbol : 'frxXAUUSD',
 
   pricePrecision : 2,
 
-  // Minimum lots — Exness allows 0.01 lots (= 1 oz of gold)
-  minLots  : 0.01,
+  // Deriv Multiplier value — amplifies the price move
+  // Available: 10, 20, 30, 40, 50, 100, 200, 500
+  // Higher = more leverage = higher P/L per $ stake
+  multiplier : parseInt(process.env.DERIV_MULTIPLIER ?? '100', 10),
 
-  // 1 lot = 100 oz.  P/L per lot = (exitPrice - entryPrice) × 100
-  ozPerLot : 100,
+  // Minimum stake in USD (Deriv's minimum is $1)
+  minStake : 1.0,
 };
 
 // ── Timeframes ────────────────────────────────────────────────────────────────
-// MetaAPI uses: '1m','5m','15m','30m','1h','4h','1d'
+// Deriv uses: '1m','3m','5m','10m','15m','30m','1h','4h','1d'
 
 const timeframe = {
   signalTf : '5m',   // M5  — where signals fire (scalping TF)

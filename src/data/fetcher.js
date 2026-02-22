@@ -1,96 +1,102 @@
 /**
- * src/data/fetcher.js — Market Data Fetcher (MetaAPI / Exness MT5)
- * =================================================================
- * Uses the official `metaapi.cloud` Node.js SDK to connect to your
- * Exness MT5 demo/live account and fetch XAU/USD candle data.
+ * src/data/fetcher.js — Market Data Fetcher (Deriv.com WebSocket API)
+ * ====================================================================
+ * Uses the free Deriv WebSocket API to stream XAU/USD candle data.
  *
- * Why MetaAPI?
- *   - Works with Exness and every other MT5 broker (Nigeria-friendly)
- *   - Official Node.js SDK with proper async/await
- *   - Handles reconnects and synchronisation automatically
- *   - Returns standardised candle data regardless of broker
+ * Why Deriv?
+ *   - 100% free, no subscription, no credit card
+ *   - Works in Nigeria and worldwide
+ *   - Official WebSocket API with full documentation
+ *   - Real XAU/USD (frxXAUUSD) pricing from live markets
  *
  * Candle format returned by all public methods:
  *   { time: Date, open, high, low, close, volume }
+ *
+ * Deriv candle granularity is in SECONDS:
+ *   M5=300, M15=900, H1=3600
+ *
+ * API docs: https://api.deriv.com/
  */
 
 import { createReadStream } from 'fs';
 import { parse }            from 'csv-parse';
+import { DerivClient }      from './derivClient.js';
 import CFG                  from '../../config.js';
 
-// ── MetaAPI connection builder ────────────────────────────────────────────────
+// Map human-readable timeframe strings to Deriv granularity (seconds)
+const TF_TO_SECONDS = {
+  '1m': 60,  '3m': 180,  '5m': 300,  '10m': 600,
+  '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400,
+  '1d': 86400,
+};
 
-async function buildMetaApiConnection() {
-  if (!CFG.broker.metaapiToken || !CFG.broker.metaapiAccountId) {
-    return null;
-  }
+// ── DerivDataFetcher ──────────────────────────────────────────────────────────
 
-  const { default: MetaApi } = await import('metaapi.cloud-sdk');
-  const api     = new MetaApi(CFG.broker.metaapiToken);
-  const account = await api.metatraderAccountApi.getAccount(CFG.broker.metaapiAccountId);
-
-  // Deploy if not already running (first launch takes ~30s)
-  if (!['DEPLOYING', 'DEPLOYED'].includes(account.state)) {
-    console.info('[Fetcher] Deploying MetaAPI account — first time takes ~30s...');
-    await account.deploy();
-  }
-  await account.waitDeployed();
-
-  const connection = account.getRPCConnection();
-  await connection.connect();
-  await connection.waitSynchronized();
-
-  console.info('[Fetcher] MetaAPI connected to Exness MT5 ✓');
-  return { api, account, connection };
-}
-
-// ── MetaApiDataFetcher ────────────────────────────────────────────────────────
-
-export class MetaApiDataFetcher {
+export class DerivDataFetcher {
   constructor() {
-    this._conn  = null;
-    this._ready = false;
+    this._client = null;
+    this._ready  = false;
   }
 
   /**
    * Must be called once at bot startup before any other method.
-   * Establishes the MT5 connection via MetaAPI cloud.
+   * Establishes the Deriv WebSocket connection and authenticates.
    */
   async init() {
-    const result = await buildMetaApiConnection();
-    if (!result) {
-      console.warn('[Fetcher] No MetaAPI credentials — CSV/mock mode only.');
+    const { appId, derivToken } = CFG.broker;
+    if (!appId) {
+      console.warn('[Fetcher] No DERIV_APP_ID set — CSV/mock mode only.');
       return;
     }
-    this._conn  = result.connection;
-    this._ready = true;
+    try {
+      this._client = new DerivClient(appId, derivToken || '');
+      await this._client.connect();
+      this._ready = true;
+    } catch (err) {
+      console.error('[Fetcher] Failed to connect to Deriv:', err.message);
+      this._client = null;
+    }
   }
 
   /**
    * Fetch OHLCV candles for the configured symbol.
    *
    * @param {string} timeframe  e.g. '5m', '15m', '1h'
-   * @param {number} count      Number of completed candles
+   * @param {number} count      Number of completed candles to fetch
    * @returns {Promise<Array<{time,open,high,low,close,volume}>>}
    */
   async getCandles(timeframe, count = 300) {
     if (!this._ready) return this._loadFromCsv();
 
+    const granularity = TF_TO_SECONDS[timeframe] ?? 300;
+    const endEpoch    = Math.floor(Date.now() / 1000);
+    const startEpoch  = endEpoch - granularity * (count + 5); // +5 buffer
+
     try {
-      // MetaAPI returns newest-first — reverse to oldest-first
-      const raw = await this._conn.getHistoricalCandles(
-        CFG.instrument.symbol,
-        timeframe,
-        new Date(),
+      const res = await this._client.send({
+        ticks_history : CFG.instrument.symbol,
+        style         : 'candles',
+        granularity,
+        start         : startEpoch,
+        end           : endEpoch,
         count,
-      );
-      return raw.slice().reverse().map(c => ({
-        time   : new Date(c.time),
-        open   : c.open,
-        high   : c.high,
-        low    : c.low,
-        close  : c.close,
-        volume : c.tickVolume ?? 0,
+        adjust_start_time : 1,
+      });
+
+      if (!res.candles || !res.candles.length) {
+        console.warn(`[Fetcher] No candles returned for ${timeframe}. Using CSV.`);
+        return this._loadFromCsv();
+      }
+
+      // Deriv candle shape: { epoch, open, high, low, close }
+      // No volume from Deriv — use 0 as placeholder
+      return res.candles.map(c => ({
+        time   : new Date(c.epoch * 1000),
+        open   : parseFloat(c.open),
+        high   : parseFloat(c.high),
+        low    : parseFloat(c.low),
+        close  : parseFloat(c.close),
+        volume : 0,
       }));
     } catch (err) {
       console.error('[Fetcher] getCandles error:', err.message);
@@ -99,26 +105,43 @@ export class MetaApiDataFetcher {
   }
 
   /**
-   * Fetch account balance, equity, and margin info.
-   * @returns {Promise<{balance, equity, margin}>}
+   * Fetch account balance and equity from Deriv.
+   * @returns {Promise<{balance, equity, currency}>}
    */
   async getAccountSummary() {
-    if (!this._ready) {
+    if (!this._ready || !this._client?.isReady) {
       return { balance: CFG.backtest.initialEquity, equity: CFG.backtest.initialEquity };
     }
-    return this._conn.getAccountInformation();
+    try {
+      const res = await this._client.send({ balance: 1, account: 'current' });
+      const bal = res.balance?.balance ?? CFG.backtest.initialEquity;
+      return { balance: bal, equity: bal, currency: res.balance?.currency ?? 'USD' };
+    } catch (err) {
+      console.warn('[Fetcher] Could not fetch balance:', err.message);
+      return { balance: CFG.backtest.initialEquity, equity: CFG.backtest.initialEquity };
+    }
   }
 
   /**
-   * Fetch all currently open positions (trades).
+   * Fetch all currently open Multiplier contracts.
    * @returns {Promise<Array>}
    */
   async getOpenTrades() {
-    if (!this._ready) return [];
-    return this._conn.getPositions();
+    if (!this._ready || !this._client?.isReady) return [];
+    try {
+      const res = await this._client.send({ portfolio: 1 });
+      // Filter to only multiplier contracts on our symbol
+      return (res.portfolio?.contracts ?? []).filter(c =>
+        c.contract_type?.startsWith('MULT') &&
+        c.underlying === CFG.instrument.symbol
+      );
+    } catch (err) {
+      console.warn('[Fetcher] Could not fetch open trades:', err.message);
+      return [];
+    }
   }
 
-  /** Load candles from local CSV (used when not connected to MetaAPI). */
+  /** Load candles from local CSV (used when not connected to Deriv API). */
   async _loadFromCsv() {
     const path = CFG.backtest.dataPath;
     return new Promise((resolve, reject) => {
@@ -138,14 +161,16 @@ export class MetaApiDataFetcher {
     });
   }
 
-  /** Close the MetaAPI connection gracefully on shutdown. */
+  /** Close the Deriv WebSocket connection gracefully. */
   async close() {
-    if (this._conn) {
-      await this._conn.close();
-      console.info('[Fetcher] MetaAPI connection closed.');
+    if (this._client) {
+      this._client.close();
     }
   }
 }
+
+// For backwards-compat with backtest engine (engine.js imports MetaApiDataFetcher)
+export { DerivDataFetcher as MetaApiDataFetcher };
 
 // ── MockDataFetcher ───────────────────────────────────────────────────────────
 
