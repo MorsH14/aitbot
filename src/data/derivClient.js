@@ -119,8 +119,13 @@ export class DerivClient {
       });
 
       ws.on('close', () => {
-        console.warn('[Deriv] WebSocket closed — scheduling reconnect...');
+        // Reject any requests still waiting — they will never get a response now
+        for (const [, { reject }] of this._pending) {
+          reject(new Error('WebSocket closed before response'));
+        }
+        this._pending.clear();
         this._ready = false;
+        console.warn('[Deriv] WebSocket closed — scheduling reconnect...');
         this._scheduleReconnect();
       });
 

@@ -48,7 +48,7 @@ const instrument = {
 const timeframe = {
   signalTf : '5m',   // M5  — where signals fire (scalping TF)
   trendTf  : '15m',  // M15 — trend direction filter
-  lookback : 300,    // Candles to fetch for indicator warm-up
+  lookback : 500,    // Candles to fetch for indicator warm-up (extra buffer for weekends)
 };
 
 // ── Technical Indicator Parameters ───────────────────────────────────────────
@@ -57,7 +57,7 @@ const indicator = {
   // Exponential Moving Averages (H1 trend filter)
   emaFast  : 21,   // Short-term momentum
   emaSlow  : 50,   // Medium-term trend
-  emaTrend : 200,  // Macro direction filter
+  emaTrend : 100,  // Macro direction filter (100 bars on M5 = ~8h of trend context)
 
   // RSI — momentum / overbought-oversold
   rsiPeriod      : 14,
@@ -92,7 +92,7 @@ const indicator = {
 const strategy = {
   // On M5 candles, ATR is smaller than M15 — adjust thresholds accordingly
   minAtr         : 0.20,  // Min ATR in USD — skip dead markets
-  maxAtr         : 5.00,  // Max ATR in USD — skip extreme news spikes
+  maxAtr         : 20.0,  // Max ATR in USD — skip extreme news spikes (Gold M5 ATR ~2–12 normal)
   minSignalScore : 3,     // Minimum confluence score (out of 5)
   minRrRatio     : 1.8,   // Minimum Risk:Reward ratio
   slAtrMult      : 1.5,   // Stop-loss = ATR × this

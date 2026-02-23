@@ -18,7 +18,7 @@
  * API docs: https://api.deriv.com/
  */
 
-import { createReadStream } from 'fs';
+import { createReadStream, existsSync } from 'fs';
 import { parse }            from 'csv-parse';
 import { DerivClient }      from './derivClient.js';
 import CFG                  from '../../config.js';
@@ -69,16 +69,15 @@ export class DerivDataFetcher {
     if (!this._ready) return this._loadFromCsv();
 
     const granularity = TF_TO_SECONDS[timeframe] ?? 300;
-    const endEpoch    = Math.floor(Date.now() / 1000);
-    const startEpoch  = endEpoch - granularity * (count + 5); // +5 buffer
 
     try {
+      // Use end:'latest' + count so Deriv counts back through actual trading bars,
+      // skipping weekends/market-close gaps automatically.
       const res = await this._client.send({
-        ticks_history : CFG.instrument.symbol,
-        style         : 'candles',
+        ticks_history     : CFG.instrument.symbol,
+        style             : 'candles',
         granularity,
-        start         : startEpoch,
-        end           : endEpoch,
+        end               : 'latest',
         count,
         adjust_start_time : 1,
       });
@@ -114,7 +113,14 @@ export class DerivDataFetcher {
     }
     try {
       const res = await this._client.send({ balance: 1, account: 'current' });
-      const bal = res.balance?.balance ?? CFG.backtest.initialEquity;
+      const bal = res.balance?.balance ?? 0;
+      if (bal === 0) {
+        console.warn(
+          '[Fetcher] Account balance is $0. If this is a demo account, go to\n' +
+          '  app.deriv.com → switch to Demo account → API Token → create a new token.\n' +
+          '  Real accounts (CR...) need a deposit before trading.'
+        );
+      }
       return { balance: bal, equity: bal, currency: res.balance?.currency ?? 'USD' };
     } catch (err) {
       console.warn('[Fetcher] Could not fetch balance:', err.message);
@@ -144,6 +150,11 @@ export class DerivDataFetcher {
   /** Load candles from local CSV (used when not connected to Deriv API). */
   async _loadFromCsv() {
     const path = CFG.backtest.dataPath;
+    if (!existsSync(path)) {
+      console.warn(`[Fetcher] CSV file not found: ${path}`);
+      console.warn('[Fetcher] Place a XAUUSD_M5.csv in data/historical/ for offline use.');
+      return [];
+    }
     return new Promise((resolve, reject) => {
       const rows = [];
       createReadStream(path)
