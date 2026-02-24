@@ -40,6 +40,9 @@ const instrument = {
 
   // Minimum stake in USD (Deriv's minimum is $1)
   minStake : 1.0,
+
+  // Maximum stake in USD — Deriv hard limit for frxXAUUSD Multipliers
+  maxStake : 2000.0,
 };
 
 // ── Timeframes ────────────────────────────────────────────────────────────────

@@ -175,7 +175,7 @@ export class TradeExecutor {
     const takeProfitUsd = riskAmount * (signal.rrRatio ?? CFG.strategy.tpSlMult);
 
     return {
-      stake        : Math.max(parseFloat(stake.toFixed(2)), CFG.instrument.minStake),
+      stake        : Math.min(Math.max(parseFloat(stake.toFixed(2)), CFG.instrument.minStake), CFG.instrument.maxStake),
       stopLossUsd  : parseFloat(stopLossUsd.toFixed(2)),
       takeProfitUsd: parseFloat(takeProfitUsd.toFixed(2)),
     };
