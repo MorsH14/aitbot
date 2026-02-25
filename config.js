@@ -99,10 +99,10 @@ const strategy = {
   // On M5 candles, ATR is smaller than M15 — adjust thresholds accordingly
   minAtr         : 0.20,  // Min ATR in USD — skip dead markets
   maxAtr         : 20.0,  // Max ATR in USD — skip extreme news spikes (Gold M5 ATR ~2–12 normal)
-  minSignalScore : 3,     // Minimum confluence score (out of 5)
-  minRrRatio     : 1.8,   // Minimum Risk:Reward ratio
-  slAtrMult      : 2.0,   // Stop-loss = ATR × this (raised from 1.5 — M5 ATR ~$1-2, 1.5× too tight for gold noise)
-  tpSlMult       : 2.0,   // Take-profit = SL_distance × this (2:1 R:R)
+  minSignalScore : 4,     // Minimum confluence score (out of 5) — raised 3→4 to reduce low-quality trades
+  minRrRatio     : 2.5,   // Minimum Risk:Reward ratio
+  slAtrMult      : 2.0,   // Stop-loss = ATR × this
+  tpSlMult       : 3.0,   // Take-profit = SL_distance × this (3:1 R:R) — breakeven at 25% win rate vs 33% for 2:1
 };
 
 // ── Risk Management ───────────────────────────────────────────────────────────

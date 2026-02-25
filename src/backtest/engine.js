@@ -70,6 +70,10 @@ export class BacktestEngine {
       const nextBar     = m5Enriched[i + 1];
       const currentTime = bar.time;
 
+      // Session filter: only trade during London + NY hours (07:00-20:00 UTC)
+      const barHour = new Date(currentTime).getUTCHours();
+      const inSession = barHour >= CFG.news.sessionStartUtc && barHour < CFG.news.sessionEndUtc;
+
       // M15 trend slice up to current time (mirrors live trendTf='15m')
       const m15TrendSlice = m15TrendEnriched.filter(c => c.time <= currentTime);
       if (m15TrendSlice.length < 50) {
@@ -100,7 +104,7 @@ export class BacktestEngine {
       }
 
       // ── Check for new signal ──────────────────────────────────────────────
-      if (!openTrade) {
+      if (!openTrade && inSession) {
         const { allowed } = riskMgr.canTrade(0, currentTime);
         if (allowed) {
           const m5Slice  = m5Enriched.slice(0, i + 1);
