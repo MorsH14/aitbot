@@ -81,9 +81,11 @@ export class SignalGenerator {
     const buyOk  = buyResult.score  >= buyResult.requiredScore;
     const sellOk = sellResult.score >= sellResult.requiredScore;
 
-    if (buyOk && (!sellOk || buyResult.score >= sellResult.score)) {
+    // Strict > avoids buy bias: when scores are equal, no trade is taken.
+    // Equal-score signals = marginal conviction = not worth the spread+commission.
+    if (buyOk && (!sellOk || buyResult.score > sellResult.score)) {
       direction = 'buy';  chosen = buyResult;
-    } else if (sellOk) {
+    } else if (sellOk && (!buyOk || sellResult.score > buyResult.score)) {
       direction = 'sell'; chosen = sellResult;
     }
 
@@ -166,8 +168,9 @@ export class SignalGenerator {
         if (rsi < ind.rsiOversold) {
           score++;
           reasons.push(`RSI oversold (${rsi.toFixed(1)})`);
-        } else if (trendAligned && rsi < 55) {
-          // Buying in an uptrend when RSI is still below 55 = early entry on pullback
+        } else if (trendAligned && rsi < 62) {
+          // Buying in an uptrend when RSI is below 62 = entry during pullback or mid-trend pause
+          // 55 was too tight — gold M5 RSI often sits 50-65 during healthy uptrends, missing valid entries
           score++;
           reasons.push(`RSI pullback zone (${rsi.toFixed(1)})`);
         } else if (divConfirmed && !isCounterTrend) {
@@ -220,7 +223,8 @@ export class SignalGenerator {
 
       if (k != null && d != null && kp != null && dp != null) {
         // Cross must happen below the extreme ceiling (< 90 for sell, > 10 for buy)
-        const stochBuy  = (kp <= dp) && (k > d) && (k < ind.stochOb) && (kp < ind.stochOb);
+        // k > 10 guards against spike-low noise crosses (symmetric with k < 90 on sell side)
+        const stochBuy  = (kp <= dp) && (k > d) && (k > 10) && (k < ind.stochOb) && (kp < ind.stochOb);
         const stochSell = (kp >= dp) && (k < d) && (k > ind.stochOs) && (kp > ind.stochOs) && (k < 90);
 
         if (isBuy && stochBuy) {

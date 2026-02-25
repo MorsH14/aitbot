@@ -217,23 +217,43 @@ export class MockDataFetcher {
 
   async getCandles(timeframe, count = 300) {
     const candles = [];
-    let price = 2350.0;
-    const now = Date.now();
-    const interval = 5 * 60 * 1000; // 5 minutes in ms
+    let price    = 2350.0;
+    const now    = Date.now();
+    const tfMs   = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000 };
+    const interval = tfMs[timeframe] ?? 300_000;
+
+    // Simulate realistic trending gold: longer cycles so M15 EMA stacks align.
+    // Drift ± noise model calibrated to real gold M5 volatility (ATR ~$2-3).
+    let trendDir      = 1;
+    let barsInTrend   = 0;
+    let trendDuration = 120 + Math.floor(Math.random() * 180); // 2-5 hours per leg
 
     for (let i = count - 1; i >= 0; i--) {
-      const chg = (Math.random() - 0.5) * 1.5; // ±$0.75 typical M5 move
+      barsInTrend++;
+      if (barsInTrend >= trendDuration) {
+        trendDir      = -trendDir;
+        barsInTrend   = 0;
+        trendDuration = 120 + Math.floor(Math.random() * 180);
+      }
+
+      // Drift 0.25 per bar + noise ±$1.50 → ATR ~$2, matches real gold M5
+      const drift = trendDir * 0.25;
+      const noise = (Math.random() - 0.5) * 3.0;
+      const chg   = drift + noise;
+
       const o = price;
       const c = price + chg;
-      const h = Math.max(o, c) + Math.random() * 0.3;
-      const l = Math.min(o, c) - Math.random() * 0.3;
+      const wickUp   = Math.random() * (trendDir === -1 ? 1.0 : 0.5);
+      const wickDown = Math.random() * (trendDir ===  1 ? 1.0 : 0.5);
+      const h = Math.max(o, c) + wickUp;
+      const l = Math.min(o, c) - wickDown;
 
       candles.push({
-        time: new Date(now - i * interval),
-        open: parseFloat(o.toFixed(2)),
-        high: parseFloat(h.toFixed(2)),
-        low: parseFloat(l.toFixed(2)),
-        close: parseFloat(c.toFixed(2)),
+        time  : new Date(now - i * interval),
+        open  : parseFloat(o.toFixed(2)),
+        high  : parseFloat(h.toFixed(2)),
+        low   : parseFloat(l.toFixed(2)),
+        close : parseFloat(c.toFixed(2)),
         volume: Math.floor(200 + Math.random() * 1000),
       });
       price = c;

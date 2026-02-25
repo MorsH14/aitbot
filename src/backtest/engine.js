@@ -43,18 +43,18 @@ export class BacktestEngine {
     console.info(`Data source:    ${this._dataSource}`);
     console.info('='.repeat(60));
 
-    const m15Full = await this._loadData();
-    if (!m15Full || m15Full.length < WARMUP_BARS + 10) {
+    const m5Full = await this._loadData();
+    if (!m5Full || m5Full.length < WARMUP_BARS + 10) {
       throw new Error(`Not enough candle data (need >${WARMUP_BARS} bars).`);
     }
 
     // Pre-compute indicators on FULL dataset (faster than per-bar recalculation)
-    console.info(`Calculating indicators on ${m15Full.length} bars...`);
-    const m15Enriched = addAllIndicators(m15Full);
+    console.info(`Calculating indicators on ${m5Full.length} bars...`);
+    const m5Enriched = addAllIndicators(m5Full);
 
-    // Resample to H1 and enrich
-    const h1Full      = resampleToH1(m15Full);
-    const h1Enriched  = addAllIndicators(h1Full);
+    // Resample M5 → M15 to match live trendTf='15m' (was wrongly resampling to H1)
+    const m15TrendFull     = resampleToM15(m5Full);
+    const m15TrendEnriched = addAllIndicators(m15TrendFull);
 
     // ── Main Loop ─────────────────────────────────────────────────────────────
     let equity       = CFG.backtest.initialEquity;
@@ -63,16 +63,16 @@ export class BacktestEngine {
     const riskMgr      = new RiskManager(equity);
     let openTrade      = null;
 
-    console.info(`Iterating ${m15Enriched.length} bars (warmup: ${WARMUP_BARS})...`);
+    console.info(`Iterating ${m5Enriched.length} bars (warmup: ${WARMUP_BARS})...`);
 
-    for (let i = WARMUP_BARS; i < m15Enriched.length - 1; i++) {
-      const bar         = m15Enriched[i];
-      const nextBar     = m15Enriched[i + 1];
+    for (let i = WARMUP_BARS; i < m5Enriched.length - 1; i++) {
+      const bar         = m5Enriched[i];
+      const nextBar     = m5Enriched[i + 1];
       const currentTime = bar.time;
 
-      // H1 slice up to current time
-      const h1Slice = h1Enriched.filter(c => c.time <= currentTime);
-      if (h1Slice.length < 50) {
+      // M15 trend slice up to current time (mirrors live trendTf='15m')
+      const m15TrendSlice = m15TrendEnriched.filter(c => c.time <= currentTime);
+      if (m15TrendSlice.length < 50) {
         equityCurve.push({ time: currentTime, equity });
         continue;
       }
@@ -101,10 +101,10 @@ export class BacktestEngine {
 
       // ── Check for new signal ──────────────────────────────────────────────
       if (!openTrade) {
-        const { allowed } = riskMgr.canTrade(0);
+        const { allowed } = riskMgr.canTrade(0, currentTime);
         if (allowed) {
-          const m15Slice = m15Enriched.slice(0, i + 1);
-          const signal   = this._signalGen.evaluate(m15Slice, h1Slice);
+          const m5Slice  = m5Enriched.slice(0, i + 1);
+          const signal   = this._signalGen.evaluate(m5Slice, m15TrendSlice);
 
           if (signal) {
             // Fill on next bar's open + spread
@@ -126,7 +126,7 @@ export class BacktestEngine {
                 atr         : signal.atr,
                 reasons     : signal.reasons,
               };
-              riskMgr.recordTradeOpened();
+              riskMgr.recordTradeOpened(currentTime);
             }
           }
         }
@@ -137,12 +137,12 @@ export class BacktestEngine {
 
     // Force-close any trade still open at the end of data
     if (openTrade) {
-      const lastPrice = m15Enriched.at(-1).close;
+      const lastPrice = m5Enriched.at(-1).close;
       const pnl       = calcPnl(openTrade, lastPrice);
       equity += pnl;
       trades.push({
         ...openTrade,
-        exitTime    : m15Enriched.at(-1).time,
+        exitTime    : m5Enriched.at(-1).time,
         exitPrice   : lastPrice,
         reasonClose : 'end_of_data',
         pnlUsd      : pnl,
@@ -200,7 +200,7 @@ export class BacktestEngine {
 
   async _loadData() {
     if (this._dataSource === 'mock') {
-      return new MockDataFetcher().getCandles('5m', 2000);
+      return new MockDataFetcher().getCandles('5m', 5000);
     }
     if (this._dataSource === 'live') {
       const f = new MetaApiDataFetcher();
@@ -216,14 +216,15 @@ export class BacktestEngine {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Resample M15 candles to H1 by grouping 4 M15 bars.
- * Uses UTC hour boundaries.
+ * Resample M5 candles to M15 by grouping into 15-minute UTC buckets.
+ * Matches live trendTf='15m' so backtest and live use identical trend data.
  */
-function resampleToH1(candles) {
+function resampleToM15(candles) {
   const buckets = new Map();
   for (const c of candles) {
-    const d   = new Date(c.time);
-    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}-${d.getUTCHours()}`;
+    const d    = new Date(c.time);
+    const slot = Math.floor(d.getUTCMinutes() / 15) * 15;
+    const key  = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}-${d.getUTCHours()}-${slot}`;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(c);
   }

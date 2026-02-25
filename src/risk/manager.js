@@ -44,8 +44,8 @@ export class RiskManager {
     this._tradeCount += 1;
   }
 
-  recordTradeOpened() {
-    this._lastTradeTime = new Date();
+  recordTradeOpened(simTime = null) {
+    this._lastTradeTime = simTime ?? new Date();
   }
 
   // ── Pre-trade Check ────────────────────────────────────────────────────────
@@ -55,8 +55,8 @@ export class RiskManager {
    * @param {number} openTradeCount  Number of currently open positions
    * @returns {{ allowed: boolean, reason: string }}
    */
-  canTrade(openTradeCount) {
-    this._resetIfNewDay();
+  canTrade(openTradeCount, simTime = null) {
+    this._resetIfNewDay(simTime);
 
     if (openTradeCount >= r.maxOpenTrades) {
       return { allowed: false, reason: `Max open trades (${openTradeCount}/${r.maxOpenTrades})` };
@@ -76,7 +76,8 @@ export class RiskManager {
     }
 
     if (this._lastTradeTime) {
-      const elapsedMs = Date.now() - this._lastTradeTime.getTime();
+      const now        = simTime ?? new Date();
+      const elapsedMs  = now.getTime() - this._lastTradeTime.getTime();
       const cooldownMs = 15 * 60 * 1000;
       if (elapsedMs < cooldownMs) {
         const remainingSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
@@ -156,8 +157,8 @@ export class RiskManager {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  _resetIfNewDay() {
-    const today = _todayUtc();
+  _resetIfNewDay(simTime = null) {
+    const today = simTime ? simTime.toISOString().slice(0, 10) : _todayUtc();
     if (today !== this._sessionDate) {
       this._sessionDate = today;
       this._dayStartEq  = this.equity;

@@ -43,6 +43,9 @@ const instrument = {
 
   // Maximum stake in USD — Deriv hard limit for frxXAUUSD Multipliers
   maxStake : 2000.0,
+
+  // Minimum position units for backtest P/L calculation (1 oz gold minimum)
+  minUnits : 1,
 };
 
 // ── Timeframes ────────────────────────────────────────────────────────────────
@@ -98,7 +101,7 @@ const strategy = {
   maxAtr         : 20.0,  // Max ATR in USD — skip extreme news spikes (Gold M5 ATR ~2–12 normal)
   minSignalScore : 3,     // Minimum confluence score (out of 5)
   minRrRatio     : 1.8,   // Minimum Risk:Reward ratio
-  slAtrMult      : 1.5,   // Stop-loss = ATR × this
+  slAtrMult      : 2.0,   // Stop-loss = ATR × this (raised from 1.5 — M5 ATR ~$1-2, 1.5× too tight for gold noise)
   tpSlMult       : 2.0,   // Take-profit = SL_distance × this (2:1 R:R)
 };
 
