@@ -69,23 +69,14 @@ export class SignalGenerator {
     // Pre-compute RSI divergence once (expensive — reused across directions)
     const rsiDiv = rsiDivergence(m15Candles, 20);
 
-    // Score both directions
-    const buyResult  = this._score('buy',  bar, h1Bar, m15Candles, rsiDiv);
+    // Sell-only mode: only evaluate sell signals
     const sellResult = this._score('sell', bar, h1Bar, m15Candles, rsiDiv);
 
-    // Each direction has its own minimum score threshold
-    // Counter-trend trades require a higher bar of confidence
     let direction = null;
     let chosen    = null;
 
-    const buyOk  = buyResult.score  >= buyResult.requiredScore;
     const sellOk = sellResult.score >= sellResult.requiredScore;
-
-    // Strict > avoids buy bias: when scores are equal, no trade is taken.
-    // Equal-score signals = marginal conviction = not worth the spread+commission.
-    if (buyOk && (!sellOk || buyResult.score > sellResult.score)) {
-      direction = 'buy';  chosen = buyResult;
-    } else if (sellOk && (!buyOk || sellResult.score > buyResult.score)) {
+    if (sellOk) {
       direction = 'sell'; chosen = sellResult;
     }
 
