@@ -69,14 +69,26 @@ export class SignalGenerator {
     // Pre-compute RSI divergence once (expensive — reused across directions)
     const rsiDiv = rsiDivergence(m15Candles, 20);
 
-    // Sell-only mode: only evaluate sell signals
+    const buyResult  = this._score('buy',  bar, h1Bar, m15Candles, rsiDiv);
     const sellResult = this._score('sell', bar, h1Bar, m15Candles, rsiDiv);
 
     let direction = null;
     let chosen    = null;
 
+    const buyOk  = buyResult.score  >= buyResult.requiredScore;
     const sellOk = sellResult.score >= sellResult.requiredScore;
-    if (sellOk) {
+
+    if (buyOk && sellOk) {
+      // Both qualify — take the higher-conviction signal only.
+      // Equal score = ambiguous market = stay flat (no trade).
+      if (buyResult.score > sellResult.score) {
+        direction = 'buy'; chosen = buyResult;
+      } else if (sellResult.score > buyResult.score) {
+        direction = 'sell'; chosen = sellResult;
+      }
+    } else if (buyOk) {
+      direction = 'buy'; chosen = buyResult;
+    } else if (sellOk) {
       direction = 'sell'; chosen = sellResult;
     }
 
