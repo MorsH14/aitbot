@@ -165,7 +165,15 @@ async function runLive(mock = false) {
       // ── H. Signal evaluation ───────────────────────────────────────────────
       const signal = signalGen.evaluate(m15, h1);
       if (!signal) {
-        logger.debug('No signal this bar.');
+        const lb = signalGen.lastBar;
+        if (lb) {
+          logger.debug(
+            `No signal — BUY ${lb.buy.score}/${lb.buy.required} [${lb.buy.reasons.join(', ') || 'none'}] | ` +
+            `SELL ${lb.sell.score}/${lb.sell.required} [${lb.sell.reasons.join(', ') || 'none'}]`
+          );
+        } else {
+          logger.debug('No signal this bar.');
+        }
         return;
       }
 

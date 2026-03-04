@@ -72,6 +72,12 @@ export class SignalGenerator {
     const buyResult  = this._score('buy',  bar, h1Bar, m15Candles, rsiDiv);
     const sellResult = this._score('sell', bar, h1Bar, m15Candles, rsiDiv);
 
+    // Expose scores so the caller can log them on no-signal bars
+    this.lastBar = {
+      buy:  { score: buyResult.score,  required: buyResult.requiredScore,  reasons: buyResult.reasons  },
+      sell: { score: sellResult.score, required: sellResult.requiredScore, reasons: sellResult.reasons },
+    };
+
     let direction = null;
     let chosen    = null;
 
@@ -173,9 +179,12 @@ export class SignalGenerator {
           reasons.push(`RSI oversold (${rsi.toFixed(1)})`);
         } else if (trendAligned && rsi < 62) {
           // Buying in an uptrend when RSI is below 62 = entry during pullback or mid-trend pause
-          // 55 was too tight — gold M5 RSI often sits 50-65 during healthy uptrends, missing valid entries
           score++;
           reasons.push(`RSI pullback zone (${rsi.toFixed(1)})`);
+        } else if (trendNeutral && rsi < 45) {
+          // Neutral market: RSI below midline = bearish pressure, price at lower range = buy bias
+          score++;
+          reasons.push(`RSI below midline in neutral (${rsi.toFixed(1)})`);
         } else if (divConfirmed && !isCounterTrend) {
           score++;
           reasons.push(`RSI bullish divergence`);
@@ -188,6 +197,10 @@ export class SignalGenerator {
           // Selling in a downtrend when RSI is still above 45 = early entry on rally
           score++;
           reasons.push(`RSI rally zone (${rsi.toFixed(1)})`);
+        } else if (trendNeutral && rsi > 55) {
+          // Neutral market: RSI above midline = bullish pressure, price at upper range = sell bias
+          score++;
+          reasons.push(`RSI above midline in neutral (${rsi.toFixed(1)})`);
         } else if (divConfirmed && !isCounterTrend) {
           score++;
           reasons.push(`RSI bearish divergence`);

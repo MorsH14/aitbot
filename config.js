@@ -98,8 +98,8 @@ const indicator = {
 const strategy = {
   // On M5 candles, ATR is smaller than M15 — adjust thresholds accordingly
   minAtr         : 0.20,  // Min ATR in USD — skip dead markets
-  maxAtr         : 20.0,  // Max ATR in USD — skip extreme news spikes (Gold M5 ATR ~2–12 normal)
-  minSignalScore : 4,     // Minimum confluence score (out of 5) — raised 3→4 to reduce low-quality trades
+  maxAtr         : 35.0,  // Max ATR in USD — skip extreme news spikes (Gold at $5100+, M5 ATR ~6–25 normal)
+  minSignalScore : 3,     // Minimum confluence score (out of 5) — trend + RSI + one crossover = valid entry
   minRrRatio     : 2.5,   // Minimum Risk:Reward ratio
   slAtrMult      : 2.0,   // Stop-loss = ATR × this
   tpSlMult       : 3.0,   // Take-profit = SL_distance × this (3:1 R:R) — breakeven at 25% win rate vs 33% for 2:1
