@@ -177,8 +177,8 @@ export class SignalGenerator {
         if (rsi < ind.rsiOversold) {
           score++;
           reasons.push(`RSI oversold (${rsi.toFixed(1)})`);
-        } else if (trendAligned && rsi < 62) {
-          // Buying in an uptrend when RSI is below 62 = entry during pullback or mid-trend pause
+        } else if (trendAligned && rsi < 55) {
+          // Buying in an uptrend when RSI is below 55 = genuine pullback (not just mid-trend noise)
           score++;
           reasons.push(`RSI pullback zone (${rsi.toFixed(1)})`);
         } else if (trendNeutral && rsi < 45) {
@@ -240,7 +240,7 @@ export class SignalGenerator {
       if (k != null && d != null && kp != null && dp != null) {
         // Cross must happen below the extreme ceiling (< 90 for sell, > 10 for buy)
         // k > 10 guards against spike-low noise crosses (symmetric with k < 90 on sell side)
-        const stochBuy  = (kp <= dp) && (k > d) && (k > 10) && (k < ind.stochOb) && (kp < ind.stochOb);
+        const stochBuy  = (kp <= dp) && (k > d) && (k > 10) && (kp > 10) && (k < ind.stochOb) && (kp < ind.stochOb);
         const stochSell = (kp >= dp) && (k < d) && (k > ind.stochOs) && (kp > ind.stochOs) && (k < 90);
 
         if (isBuy && stochBuy) {
