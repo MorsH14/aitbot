@@ -81,20 +81,10 @@ export class SignalGenerator {
     let direction = null;
     let chosen    = null;
 
-    const buyOk  = buyResult.score  >= buyResult.requiredScore;
+    // Sell-only mode: buy signals are suppressed
     const sellOk = sellResult.score >= sellResult.requiredScore;
 
-    if (buyOk && sellOk) {
-      // Both qualify — take the higher-conviction signal only.
-      // Equal score = ambiguous market = stay flat (no trade).
-      if (buyResult.score > sellResult.score) {
-        direction = 'buy'; chosen = buyResult;
-      } else if (sellResult.score > buyResult.score) {
-        direction = 'sell'; chosen = sellResult;
-      }
-    } else if (buyOk) {
-      direction = 'buy'; chosen = buyResult;
-    } else if (sellOk) {
+    if (sellOk) {
       direction = 'sell'; chosen = sellResult;
     }
 
