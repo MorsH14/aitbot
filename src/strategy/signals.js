@@ -66,29 +66,21 @@ export class SignalGenerator {
 
     const currentPrice = bar.close;
 
-    // Pre-compute RSI divergence once (expensive — reused across directions)
+    // Pre-compute RSI divergence once (expensive)
     const rsiDiv = rsiDivergence(m15Candles, 20);
 
-    const buyResult  = this._score('buy',  bar, h1Bar, m15Candles, rsiDiv);
+    // SELL-ONLY MODE: buy signals are never evaluated or placed
     const sellResult = this._score('sell', bar, h1Bar, m15Candles, rsiDiv);
 
-    // Expose scores so the caller can log them on no-signal bars
+    // Expose score so the caller can log it on no-signal bars
     this.lastBar = {
-      buy:  { score: buyResult.score,  required: buyResult.requiredScore,  reasons: buyResult.reasons  },
       sell: { score: sellResult.score, required: sellResult.requiredScore, reasons: sellResult.reasons },
     };
 
-    let direction = null;
-    let chosen    = null;
+    if (sellResult.score < sellResult.requiredScore) return null;
 
-    // Sell-only mode: buy signals are suppressed
-    const sellOk = sellResult.score >= sellResult.requiredScore;
-
-    if (sellOk) {
-      direction = 'sell'; chosen = sellResult;
-    }
-
-    if (!direction) return null;
+    const direction = 'sell';
+    const chosen    = sellResult;
 
     const levels = this._calculateLevels(direction, currentPrice, atr, m15Candles);
     if (!levels) return null;
