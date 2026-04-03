@@ -1,35 +1,21 @@
 /**
- * src/strategy/signals.js — Signal Generation Engine (Professional Grade)
- * =========================================================================
- * Multi-Confluence Scalp Strategy for XAU/USD — rules based on 30-year
- * professional Gold trading principles:
+ * src/strategy/signals.js — Trend-Following Scalp Signal Engine
+ * ==============================================================
+ * Strategy: EMA cross filtered by EMA200 trend + RSI(7) exhaustion
  *
- * CORE LAWS:
- *   1. Never fight the trend with a tight stop.
- *   2. Counter-trend trades require PROOF of exhaustion (divergence), not
- *      just an overbought reading. Overbought can stay overbought for hours.
- *   3. A stop-loss below 1× ATR will be taken out by normal market noise.
- *   4. RSI at 80 in an uptrend means strong buyers — wait for divergence.
- *   5. Trade fewer setups with higher conviction. Quality over quantity.
+ * SELL ONLY — all four gates must pass on the same bar:
  *
- * THE 5 CONFLUENCE CHECKS (each = 1 point):
- *   [1] Trend alignment — M15 EMA stack direction MUST match trade direction.
- *       Counter-trend is ONLY allowed when RSI divergence is confirmed (acts
- *       as substitute for this point + gates the entire check).
- *   [2] RSI — oversold/overbought zone OR confirmed divergence.
- *   [3] MACD crossover — momentum direction confirmed.
- *   [4] Stochastic crossover — secondary momentum, must NOT be at extreme
- *       (K>95 or K<5 is a spike, not a signal).
- *   [5] Bollinger Band touch + structural level confluence.
+ *   [1] VOLATILITY GUARD : ATR within [minAtr, maxAtr] — skip dead/spiked markets
+ *   [2] TREND FILTER     : Close < EMA200 — only sell in a downtrend
+ *   [3] EMA CROSS        : EMA5 crosses BELOW EMA13 on this bar (fresh momentum shift)
+ *   [4] RSI EXHAUSTION   : RSI(7) > 70 AND slope < 0 (overbought and rolling over)
  *
- * GATES (hard blocks, not scored):
- *   - Counter-trend: requires RSI divergence (no divergence = no trade).
- *   - Counter-trend minimum score raised to 4/5.
- *   - RSI on wrong side of midline for trend-aligned trades = check [2] fails.
- *   - Minimum SL distance enforced at 1.0× ATR (noise floor).
+ * STOP LOSS  : max(recent swing high + 0.2×ATR,  entry + 2.0×ATR)
+ *              floored at entry + 1.0×ATR so normal noise never hits the stop
+ * TAKE PROFIT: SL_distance × 1.5  →  1.5:1 R:R
+ * TRAILING   : Managed by RiskManager — activates at 1% profit, trails 0.8×ATR
  */
 
-import { rsiDivergence } from '../indicators/technical.js';
 import CFG from '../../config.js';
 
 const str = CFG.strategy;
@@ -39,257 +25,186 @@ const ind = CFG.indicator;
 
 /**
  * @typedef {Object} Signal
- * @property {'buy'|'sell'} direction
- * @property {number}  entryPrice
- * @property {number}  stopLoss
- * @property {number}  takeProfit
- * @property {number}  rrRatio
- * @property {number}  score
- * @property {number}  atr
- * @property {boolean} isCounterTrend
+ * @property {'sell'}    direction
+ * @property {number}   entryPrice
+ * @property {number}   stopLoss
+ * @property {number}   takeProfit
+ * @property {number}   rrRatio
+ * @property {number}   score         — always 4 (one point per gate passed)
+ * @property {number}   requiredScore — always 4
+ * @property {number}   atr
+ * @property {boolean}  isCounterTrend — always false (trend-following only)
  * @property {string[]} reasons
- * @property {Date}    timestamp
+ * @property {Date}     timestamp
  */
 
 // ── SignalGenerator ───────────────────────────────────────────────────────────
 
 export class SignalGenerator {
-  evaluate(m15Candles, h1Candles) {
-    if (m15Candles.length < 100 || h1Candles.length < 30) return null;
+  /**
+   * Evaluate the current bar for a sell entry.
+   *
+   * @param {Array} m5Candles   Signal-TF candles enriched with indicators (oldest first)
+   * @param {Array} m15Candles  Trend-TF candles (kept for API compat — not used directly)
+   * @returns {Signal|null}
+   */
+  evaluate(m5Candles, m15Candles) {
+    this.lastBar = null;
 
-    const bar   = m15Candles.at(-1);
-    const h1Bar = h1Candles.at(-1);
-    const atr   = bar.atr;
+    if (m5Candles.length < 50) return null;
 
-    if (atr == null) return null;
-    if (atr < str.minAtr || atr > str.maxAtr) return null;
+    const bar  = m5Candles.at(-1);
+    const prev = m5Candles.at(-2);
+    const atr  = bar.atr;
 
-    const currentPrice = bar.close;
+    // ── [1] Volatility Guard ──────────────────────────────────────────────────
+    // Skip dead markets (no movement → false crosses) and news spikes (huge ATR)
+    if (atr == null || atr < str.minAtr || atr > str.maxAtr) {
+      this.lastBar = {
+        sell: { score: 0, required: 4, reasons: [`ATR ${atr?.toFixed(2) ?? 'null'} outside [${str.minAtr}, ${str.maxAtr}]`] },
+      };
+      return null;
+    }
 
-    // Pre-compute RSI divergence once (expensive)
-    const rsiDiv = rsiDivergence(m15Candles, 20);
+    const price   = bar.close;
+    const reasons = [];
 
-    // SELL-ONLY MODE: buy signals are never evaluated or placed
-    const sellResult = this._score('sell', bar, h1Bar, m15Candles, rsiDiv);
+    // ── [2] Trend Filter: price must be below EMA200 ──────────────────────────
+    // Selling into a bull trend is the #1 cause of preventable losses.
+    // The 200-period EMA on M5 gives ~16 hours of trend context.
+    if (bar.emaTrend == null) {
+      this.lastBar = { sell: { score: 0, required: 4, reasons: ['EMA200 not yet computed (warmup)'] } };
+      return null;
+    }
+    if (price >= bar.emaTrend) {
+      this.lastBar = {
+        sell: { score: 0, required: 4, reasons: [`Price ${price} ≥ EMA200 ${bar.emaTrend.toFixed(2)} — trend is bullish`] },
+      };
+      return null;
+    }
+    reasons.push(`Price(${price}) < EMA${ind.emaTrend}(${bar.emaTrend.toFixed(2)})`);
 
-    // Expose score so the caller can log it on no-signal bars
-    this.lastBar = {
-      sell: { score: sellResult.score, required: sellResult.requiredScore, reasons: sellResult.reasons },
-    };
+    // ── [3] EMA5 × EMA13 Bearish Cross ────────────────────────────────────────
+    // The fast EMA must cross BELOW the slow EMA on this exact bar.
+    // A stale cross (already crossed bars ago) is NOT a signal — it is chasing.
+    if (bar.emaFast == null || bar.emaSlow == null ||
+        prev.emaFast == null || prev.emaSlow == null) {
+      this.lastBar = { sell: { score: 1, required: 4, reasons: [...reasons, 'EMA not yet computed'] } };
+      return null;
+    }
+    const crossedDown = (prev.emaFast >= prev.emaSlow) && (bar.emaFast < bar.emaSlow);
+    if (!crossedDown) {
+      this.lastBar = {
+        sell: {
+          score   : 1,
+          required: 4,
+          reasons : [...reasons, `No fresh EMA${ind.emaFast}/EMA${ind.emaSlow} cross (fast=${bar.emaFast.toFixed(2)}, slow=${bar.emaSlow.toFixed(2)})`],
+        },
+      };
+      return null;
+    }
+    reasons.push(`EMA${ind.emaFast}(${bar.emaFast.toFixed(2)}) crossed below EMA${ind.emaSlow}(${bar.emaSlow.toFixed(2)})`);
 
-    if (sellResult.score < sellResult.requiredScore) return null;
+    // ── [4] RSI(7) Overbought + Rolling Over ──────────────────────────────────
+    // RSI must be ABOVE the overbought line AND the 3-bar slope must be negative.
+    // RSI overbought alone means nothing — it must be turning. "Overbought can
+    // stay overbought" (Gold rule #4). The cross + RSI reversal together = exhaustion.
+    const { rsi, rsiSlope } = bar;
+    if (rsi == null || rsiSlope == null) {
+      this.lastBar = { sell: { score: 2, required: 4, reasons: [...reasons, 'RSI not computed'] } };
+      return null;
+    }
+    if (rsi <= ind.rsiOverbought) {
+      this.lastBar = {
+        sell: {
+          score   : 2,
+          required: 4,
+          reasons : [...reasons, `RSI(${rsi.toFixed(1)}) not overbought (need >${ind.rsiOverbought})`],
+        },
+      };
+      return null;
+    }
+    if (rsiSlope >= 0) {
+      this.lastBar = {
+        sell: {
+          score   : 2,
+          required: 4,
+          reasons : [...reasons, `RSI(${rsi.toFixed(1)}) overbought but still rising (slope=${rsiSlope.toFixed(1)})`],
+        },
+      };
+      return null;
+    }
+    reasons.push(`RSI(${rsi.toFixed(1)}) overbought + falling (slope ${rsiSlope.toFixed(1)})`);
 
-    const direction = 'sell';
-    const chosen    = sellResult;
-
-    const levels = this._calculateLevels(direction, currentPrice, atr, m15Candles);
-    if (!levels) return null;
+    // ── All 4 gates passed — calculate entry levels ───────────────────────────
+    const levels = this._calculateLevels(price, atr, bar);
+    if (!levels) {
+      this.lastBar = { sell: { score: 4, required: 4, reasons: [...reasons, 'Level calculation failed'] } };
+      return null;
+    }
 
     const { entry, sl, tp } = levels;
-    const risk   = Math.abs(entry - sl);
-    const reward = Math.abs(tp - entry);
-    const rr     = risk > 0 ? reward / risk : 0;
+    const slDist = sl - entry;   // positive: SL is above entry for a sell
+    const tpDist = entry - tp;   // positive: TP is below entry for a sell
+    const rr     = slDist > 0 ? tpDist / slDist : 0;
 
-    if (rr < str.minRrRatio) return null;
+    if (rr < str.minRrRatio) {
+      this.lastBar = {
+        sell: {
+          score   : 4,
+          required: 4,
+          reasons : [...reasons, `R:R ${rr.toFixed(2)} below minimum ${str.minRrRatio}`],
+        },
+      };
+      return null;
+    }
+
+    this.lastBar = { sell: { score: 4, required: 4, reasons } };
 
     return {
-      direction,
-      entryPrice     : round2(entry),
-      stopLoss       : round2(sl),
-      takeProfit     : round2(tp),
-      rrRatio        : round2(rr),
-      score          : chosen.score,
-      requiredScore  : chosen.requiredScore,
-      atr            : round2(atr),
-      isCounterTrend : chosen.isCounterTrend,
-      reasons        : chosen.reasons,
-      timestamp      : bar.time,
+      direction     : 'sell',
+      entryPrice    : round2(entry),
+      stopLoss      : round2(sl),
+      takeProfit    : round2(tp),
+      rrRatio       : round2(rr),
+      score         : 4,
+      requiredScore : 4,
+      atr           : round2(atr),
+      isCounterTrend: false,
+      reasons,
+      timestamp     : bar.time,
     };
-  }
-
-  // ── Scoring ───────────────────────────────────────────────────────────────
-
-  _score(direction, bar, h1Bar, candles, rsiDiv) {
-    let score         = 0;
-    const reasons     = [];
-    const isBuy       = direction === 'buy';
-    const h1Trend     = h1Bar?.trendDir ?? 0;
-
-    // ── Trend Alignment Gate ─────────────────────────────────────────────────
-    // Determine if this trade goes WITH or AGAINST the M15 trend.
-    // Counter-trend trading is the #1 cause of preventable losses in Gold.
-    const trendAligned    = (isBuy && h1Trend === 1) || (!isBuy && h1Trend === -1);
-    const trendNeutral    = h1Trend === 0;
-    const isCounterTrend  = !trendAligned && !trendNeutral;
-
-    // Check if divergence confirms the trade direction
-    const divConfirmed = (isBuy && rsiDiv === 'bullish') || (!isBuy && rsiDiv === 'bearish');
-
-    // HARD GATE: If we're going counter-trend, RSI divergence is MANDATORY.
-    // "RSI overbought" alone does NOT justify selling into a bull trend.
-    // Gold can stay overbought for 3-4 hours during a momentum run.
-    if (isCounterTrend && !divConfirmed) {
-      return { score: 0, reasons: ['counter-trend without divergence'], requiredScore: 99, isCounterTrend };
-    }
-
-    // Counter-trend trades (even with divergence) need 4/5, not 3/5.
-    // The extra bar protects against false reversals in strong trends.
-    const requiredScore = isCounterTrend ? str.minSignalScore + 1 : str.minSignalScore;
-
-    // ── [1] Trend / Divergence ────────────────────────────────────────────────
-    if (trendAligned) {
-      score++;
-      reasons.push(`M15 trend ${isBuy ? 'bullish' : 'bearish'}`);
-    } else if (divConfirmed) {
-      // Divergence replaces trend point for counter-trend entries
-      score++;
-      reasons.push(`RSI ${rsiDiv} divergence (counter-trend confirmed)`);
-    }
-
-    // ── [2] RSI Zone ──────────────────────────────────────────────────────────
-    // For trend-aligned trades: RSI must be recovering from the correct zone,
-    // not already extended. Buying when RSI is at 70+ in an uptrend is
-    // chasing — the pullback hasn't happened yet.
-    //
-    // For counter-trend (divergence already confirmed in [1]):
-    // RSI must be in the extreme zone to add this point.
-    const rsi = bar.rsi;
-    if (rsi != null) {
-      if (isBuy) {
-        if (rsi < ind.rsiOversold) {
-          score++;
-          reasons.push(`RSI oversold (${rsi.toFixed(1)})`);
-        } else if (trendAligned && rsi < 55) {
-          // Buying in an uptrend when RSI is below 55 = genuine pullback (not just mid-trend noise)
-          score++;
-          reasons.push(`RSI pullback zone (${rsi.toFixed(1)})`);
-        } else if (trendNeutral && rsi < 45) {
-          // Neutral market: RSI below midline = bearish pressure, price at lower range = buy bias
-          score++;
-          reasons.push(`RSI below midline in neutral (${rsi.toFixed(1)})`);
-        } else if (divConfirmed && !isCounterTrend) {
-          score++;
-          reasons.push(`RSI bullish divergence`);
-        }
-      } else {
-        if (rsi > ind.rsiOverbought) {
-          score++;
-          reasons.push(`RSI overbought (${rsi.toFixed(1)})`);
-        } else if (trendAligned && rsi > 45) {
-          // Selling in a downtrend when RSI is still above 45 = early entry on rally
-          score++;
-          reasons.push(`RSI rally zone (${rsi.toFixed(1)})`);
-        } else if (trendNeutral && rsi > 55) {
-          // Neutral market: RSI above midline = bullish pressure, price at upper range = sell bias
-          score++;
-          reasons.push(`RSI above midline in neutral (${rsi.toFixed(1)})`);
-        } else if (divConfirmed && !isCounterTrend) {
-          score++;
-          reasons.push(`RSI bearish divergence`);
-        }
-      }
-    }
-
-    // ── [3] MACD Crossover ────────────────────────────────────────────────────
-    if (candles.length >= 2) {
-      const prev = candles.at(-2);
-      const { macdLine: m, macdSignal: s, macdHist: h } = bar;
-      const { macdLine: mp, macdSignal: sp }             = prev;
-
-      if (m != null && s != null && h != null && mp != null && sp != null) {
-        const buyCross  = (mp <= sp) && (m > s) && (h > 0);
-        const sellCross = (mp >= sp) && (m < s) && (h < 0);
-        if (isBuy && buyCross) {
-          score++;
-          reasons.push('MACD bullish crossover');
-        } else if (!isBuy && sellCross) {
-          score++;
-          reasons.push('MACD bearish crossover');
-        }
-      }
-    }
-
-    // ── [4] Stochastic Crossover ──────────────────────────────────────────────
-    // Stochastic at K=95-100 is a MOMENTUM SPIKE, not a reversal crossover.
-    // A Stoch crossing from 99→97 means nothing — price is still surging.
-    // We require the cross to happen BELOW the extreme ceiling (K < 90 for sell,
-    // K > 10 for buy) so we're catching a genuine cycle turn, not noise.
-    if (candles.length >= 2) {
-      const prev = candles.at(-2);
-      const { stochK: k, stochD: d }   = bar;
-      const { stochK: kp, stochD: dp } = prev;
-
-      if (k != null && d != null && kp != null && dp != null) {
-        // Cross must happen below the extreme ceiling (< 90 for sell, > 10 for buy)
-        // k > 10 guards against spike-low noise crosses (symmetric with k < 90 on sell side)
-        const stochBuy  = (kp <= dp) && (k > d) && (k > 10) && (kp > 10) && (k < ind.stochOb) && (kp < ind.stochOb);
-        const stochSell = (kp >= dp) && (k < d) && (k > ind.stochOs) && (kp > ind.stochOs) && (k < 90);
-
-        if (isBuy && stochBuy) {
-          score++;
-          reasons.push(`Stoch cross up (${k.toFixed(1)})`);
-        } else if (!isBuy && stochSell) {
-          score++;
-          reasons.push(`Stoch cross down (${k.toFixed(1)})`);
-        }
-      }
-    }
-
-    // ── [5] BB Touch + Structural Level ──────────────────────────────────────
-    const { close, bbUpper, bbLower, lastSH, lastSL, atr } = bar;
-    if (bbUpper != null && bbLower != null && atr != null) {
-      const nearLower      = close <= (bbLower + 0.3 * atr);
-      const nearUpper      = close >= (bbUpper - 0.3 * atr);
-      const nearSupport    = lastSL != null && Math.abs(close - lastSL) < 0.5 * atr;
-      const nearResistance = lastSH != null && Math.abs(close - lastSH) < 0.5 * atr;
-
-      if (isBuy && nearLower) {
-        score++;
-        reasons.push('Price at BB lower' + (nearSupport ? ' + support zone' : ''));
-      } else if (!isBuy && nearUpper) {
-        score++;
-        reasons.push('Price at BB upper' + (nearResistance ? ' + resistance zone' : ''));
-      }
-    }
-
-    return { score, reasons, requiredScore, isCounterTrend };
   }
 
   // ── Level Construction ────────────────────────────────────────────────────
 
-  _calculateLevels(direction, price, atr, candles) {
-    const isBuy = direction === 'buy';
-    const bar   = candles.at(-1);
+  /**
+   * Compute SL and TP for a sell entry.
+   *
+   * SL logic (for sell, SL is ABOVE entry):
+   *   - Structural: just above the most recent confirmed swing high
+   *   - ATR-based:  entry + slAtrMult × ATR  (fixed fallback)
+   *   - Take the HIGHER of the two (wider = more conservative = survives noise)
+   *   - Enforce hard floor: SL must be at least 1×ATR above entry
+   *
+   * TP: entry − SL_distance × tpSlMult  →  1.5:1 R:R
+   */
+  _calculateLevels(price, atr, bar) {
+    const atrSl    = price + atr * str.slAtrMult;                   // fixed ATR stop
+    const structSl = bar.lastSH != null
+      ? bar.lastSH + 0.2 * atr                                      // just above swing high
+      : atrSl;                                                       // no swing point — fall back
 
-    // ATR-based SL — the baseline, always 1.5× ATR
-    const atrSlDist = atr * str.slAtrMult;
-    const atrSl     = isBuy ? price - atrSlDist : price + atrSlDist;
+    // Use the wider SL so market noise doesn't clip the stop prematurely
+    let sl = Math.max(atrSl, structSl);
 
-    // Structural SL — just beyond nearest swing point
-    let structSl = atrSl;
-    if (isBuy && bar.lastSL != null)  structSl = bar.lastSL - 0.2 * atr;
-    if (!isBuy && bar.lastSH != null) structSl = bar.lastSH + 0.2 * atr;
+    // Hard noise floor: SL must be at least 1×ATR from entry
+    sl = Math.max(sl, price + atr);
 
-    // PROFESSIONAL RULE: SL must be at least 1.0× ATR from entry.
-    // Below that = normal market noise = guaranteed stop-out regardless
-    // of direction. Gold breathes 1× ATR without effort on M5.
-    const hardMinDist = 1.0 * atr;
+    if (sl <= price) return null;   // sanity — should never happen for sell
 
-    let sl;
-    if (isBuy) {
-      sl = Math.max(atrSl, structSl);              // Pick tighter (higher) stop
-      sl = Math.min(sl, price - hardMinDist);      // But never closer than 1× ATR
-    } else {
-      sl = Math.min(atrSl, structSl);              // Pick tighter (lower) stop
-      sl = Math.max(sl, price + hardMinDist);      // Never closer than 1× ATR
-    }
-
-    if (isBuy  && sl >= price) return null;
-    if (!isBuy && sl <= price) return null;
-
-    const slDist = Math.abs(price - sl);
-    const tp     = isBuy ? price + slDist * str.tpSlMult
-                         : price - slDist * str.tpSlMult;
+    const slDist = sl - price;
+    const tp     = price - slDist * str.tpSlMult;
 
     return { entry: price, sl, tp };
   }
@@ -300,11 +215,9 @@ export class SignalGenerator {
 const round2 = v => Math.round(v * 100) / 100;
 
 export function formatSignal(signal) {
-  const ct = signal.isCounterTrend ? ' [COUNTER-TREND]' : '';
   return (
-    `[${signal.direction.toUpperCase()}]${ct} @ ${signal.entryPrice} | ` +
+    `[${signal.direction.toUpperCase()}] @ ${signal.entryPrice} | ` +
     `SL: ${signal.stopLoss} | TP: ${signal.takeProfit} | ` +
-    `R:R ${signal.rrRatio} | Score ${signal.score}/${signal.requiredScore} | ` +
-    `ATR ${signal.atr} | ${signal.reasons.join(', ')}`
+    `R:R ${signal.rrRatio} | ATR ${signal.atr} | ${signal.reasons.join(', ')}`
   );
 }

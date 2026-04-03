@@ -60,15 +60,15 @@ const timeframe = {
 // ── Technical Indicator Parameters ───────────────────────────────────────────
 
 const indicator = {
-  // Exponential Moving Averages (H1 trend filter)
-  emaFast  : 21,   // Short-term momentum
-  emaSlow  : 50,   // Medium-term trend
-  emaTrend : 100,  // Macro direction filter (100 bars on M5 = ~8h of trend context)
+  // Exponential Moving Averages
+  emaFast  : 5,    // Entry cross — fast line (crosses below emaSlow to trigger sell)
+  emaSlow  : 13,   // Entry cross — slow line
+  emaTrend : 200,  // Trend filter — only sell when price is below this EMA
 
-  // RSI — momentum / overbought-oversold
-  rsiPeriod      : 14,
-  rsiOverbought  : 65.0,  // Tighter than standard 70 for gold volatility
-  rsiOversold    : 35.0,  // Tighter than standard 30
+  // RSI — short-period for faster reaction on M5
+  rsiPeriod      : 7,
+  rsiOverbought  : 70.0,  // Sell trigger: RSI must be above this AND turning down
+  rsiOversold    : 30.0,
 
   // MACD — momentum confirmation
   macdFast   : 12,
@@ -96,13 +96,11 @@ const indicator = {
 // ── Strategy / Signal Rules ───────────────────────────────────────────────────
 
 const strategy = {
-  // On M5 candles, ATR is smaller than M15 — adjust thresholds accordingly
-  minAtr         : 0.20,  // Min ATR in USD — skip dead markets
-  maxAtr         : 35.0,  // Max ATR in USD — skip extreme news spikes (Gold at $5100+, M5 ATR ~6–25 normal)
-  minSignalScore : 3,     // Minimum confluence score (out of 5) — trend + RSI + one crossover = valid entry
-  minRrRatio     : 2.5,   // Minimum Risk:Reward ratio
-  slAtrMult      : 2.0,   // Stop-loss = ATR × this
-  tpSlMult       : 3.0,   // Take-profit = SL_distance × this (3:1 R:R) — breakeven at 25% win rate vs 33% for 2:1
+  minAtr    : 0.50,  // Min ATR in USD — skip choppy/dead markets (raised: EMA5/13 cross needs real volatility)
+  maxAtr    : 35.0,  // Max ATR in USD — skip extreme news spikes
+  minRrRatio: 1.5,   // Minimum acceptable Risk:Reward (matches tpSlMult)
+  slAtrMult : 2.0,   // ATR-based SL fallback: entry + 2.0×ATR above entry (for sell)
+  tpSlMult  : 1.5,   // Take-profit = SL_distance × 1.5 (1.5:1 R:R initial target)
 };
 
 // ── Risk Management ───────────────────────────────────────────────────────────
@@ -111,12 +109,12 @@ const risk = {
   maxRiskPct           : 1.0,    // Max % of equity risked per trade
   maxRiskUsd           : 200.0,  // Hard USD cap per trade
   maxOpenTrades        : 2,      // Max simultaneous positions
-  maxDailyDrawdownPct  : 3.0,    // Daily drawdown % limit — bot pauses if breached
+  maxDailyDrawdownPct  : 5.0,    // Daily drawdown % limit — bot pauses if breached
   maxDailyLossUsd      : 500.0,  // Hard USD daily loss limit
 
-  // Trailing stop: activates when profit reaches X × ATR
-  trailingSlActivationMult : 1.0,
-  trailingSlDistanceMult   : 0.8,
+  // Trailing stop: activates once trade reaches 1% profit (price-based, not ATR-based)
+  trailingSlActivationPct : 0.01,  // 1% of entry price movement to activate trail
+  trailingSlDistanceMult  : 0.8,   // Trail SL at currentPrice ± 0.8×ATR once active
 };
 
 // ── News / Macro Filter ───────────────────────────────────────────────────────

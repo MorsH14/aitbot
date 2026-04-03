@@ -7,11 +7,11 @@
  *   1. 1% max risk per trade  — position size = (equity × 1%) / SL_distance
  *   2. Hard USD cap per trade — never exceed maxRiskUsd regardless of account size
  *   3. Max 2 open positions   — prevents correlated gold over-exposure
- *   4. 3% daily drawdown limit — bot self-pauses for the rest of the day
+ *   4. 5% daily drawdown limit — bot self-pauses for the rest of the day
  *   5. $500 daily USD loss cap — hard fuse
  *   6. Max 5 trades/day       — prevents overtrading on choppy days
  *   7. 15-min cooling period  — one candle gap between consecutive entries
- *   8. Trailing stop          — moves SL to breakeven then trails at 0.8×ATR
+ *   8. Trailing stop          — activates at 1% profit, trails at 0.8×ATR
  */
 
 import CFG from '../../config.js';
@@ -117,6 +117,10 @@ export class RiskManager {
    * Returns an updated stop-loss price based on trailing logic.
    * Never moves the SL against the position (one-directional ratchet).
    *
+   * Activation: once profit reaches 1% of the entry price (price-based,
+   * not ATR-based) the trail kicks in. This is more meaningful than an
+   * ATR multiple because 1% on Gold ($3000) = $30 regardless of the day's ATR.
+   *
    * @param {'buy'|'sell'} direction
    * @param {number} entry         Entry fill price
    * @param {number} currentPrice  Current market price
@@ -129,10 +133,11 @@ export class RiskManager {
       ? currentPrice - entry
       : entry - currentPrice;
 
-    // Not yet in profit territory — keep existing SL
-    if (profitDist < atr * r.trailingSlActivationMult) return currentSl;
+    // Activate trailing only when profit ≥ 1% of entry price
+    const activationThreshold = entry * r.trailingSlActivationPct;
+    if (profitDist < activationThreshold) return currentSl;
 
-    const isBuy = direction === 'buy';
+    const isBuy      = direction === 'buy';
     const breakeven  = isBuy ? entry + 0.05 : entry - 0.05;
     const trailLevel = isBuy
       ? currentPrice - atr * r.trailingSlDistanceMult
