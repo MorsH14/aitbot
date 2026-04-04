@@ -52,9 +52,10 @@ const instrument = {
 // Deriv uses: '1m','3m','5m','10m','15m','30m','1h','4h','1d'
 
 const timeframe = {
-  signalTf : '5m',   // M5  — where signals fire (scalping TF)
-  trendTf  : '15m',  // M15 — trend direction filter
-  lookback : 500,    // Candles to fetch for indicator warm-up (extra buffer for weekends)
+  signalTf      : '5m',   // M5  — where signals fire (scalping TF)
+  trendTf       : '15m',  // M15 — trend direction filter
+  lookback      : 500,    // M5 candles to fetch (indicator warm-up + weekend buffer)
+  trendLookback : 300,    // M15 candles to fetch — must be > 200 for EMA200 warmup
 };
 
 // ── Technical Indicator Parameters ───────────────────────────────────────────
@@ -98,9 +99,9 @@ const indicator = {
 const strategy = {
   minAtr    : 0.50,  // Min ATR in USD — skip choppy/dead markets (raised: EMA5/13 cross needs real volatility)
   maxAtr    : 35.0,  // Max ATR in USD — skip extreme news spikes
-  minRrRatio: 1.5,   // Minimum acceptable Risk:Reward (matches tpSlMult)
-  slAtrMult : 2.0,   // ATR-based SL fallback: entry + 2.0×ATR above entry (for sell)
-  tpSlMult  : 1.5,   // Take-profit = SL_distance × 1.5 (1.5:1 R:R initial target)
+  minRrRatio: 2.0,   // Minimum acceptable Risk:Reward — 2:1 required to overcome spread+commission
+  slAtrMult : 2.0,   // ATR-based SL fallback: entry ± 2.0×ATR (floor: 1×ATR enforced in code)
+  tpSlMult  : 2.0,   // Take-profit = SL_distance × 2.0 (2:1 R:R — break-even win rate ~38%)
 };
 
 // ── Risk Management ───────────────────────────────────────────────────────────

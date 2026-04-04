@@ -120,7 +120,7 @@ async function runLive(mock = false) {
       try {
         [m15Candles, h1Candles] = await Promise.all([
           fetcher.getCandles(CFG.timeframe.signalTf, CFG.timeframe.lookback),
-          fetcher.getCandles(CFG.timeframe.trendTf,  Math.floor(CFG.timeframe.lookback / 4)),
+          fetcher.getCandles(CFG.timeframe.trendTf,  CFG.timeframe.trendLookback),
         ]);
       } catch (e) {
         logger.error(`Data fetch failed: ${e.message}`);
@@ -139,10 +139,10 @@ async function runLive(mock = false) {
       const latestBar   = m15.at(-1);
       const currentPrice = latestBar.close;
       const currentAtr   = latestBar.atr ?? 1.0;
-      const h1Trend      = h1.at(-1)?.trendDir ?? 0;
-      const trendLabel   = { 1: 'BULL', '-1': 'BEAR', 0: 'NEUTRAL' }[h1Trend] ?? '?';
+      const m15Trend     = h1.at(-1)?.trendDir ?? 0;
+      const trendLabel   = { 1: 'BULL', '-1': 'BEAR', 0: 'NEUTRAL' }[m15Trend] ?? '?';
 
-      logger.debug(`XAU/USD: ${currentPrice} | ATR: ${currentAtr?.toFixed(2)} | H1: ${trendLabel}`);
+      logger.debug(`XAU/USD: ${currentPrice} | ATR: ${currentAtr?.toFixed(2)} | M15: ${trendLabel}`);
 
       // ── F. Manage open trades (trailing stops) ─────────────────────────────
       const openTrades = await fetcher.getOpenTrades();
@@ -168,7 +168,8 @@ async function runLive(mock = false) {
         const lb = signalGen.lastBar;
         if (lb) {
           logger.debug(
-            `No signal — SELL ${lb.sell.score}/${lb.sell.required} [${lb.sell.reasons.join(', ') || 'none'}]`
+            `No signal — SELL ${lb.sell.score}/${lb.sell.required} [${lb.sell.reasons.at(-1) ?? 'none'}] | ` +
+            `BUY ${lb.buy.score}/${lb.buy.required} [${lb.buy.reasons.at(-1) ?? 'none'}]`
           );
         } else {
           logger.debug('No signal this bar.');
