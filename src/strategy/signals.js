@@ -8,7 +8,7 @@
  *   MANDATORY (each adds 1 pt; early-exit if either fails — direction blocked):
  *   [M1] VOLATILITY GUARD : ATR within [minAtr, maxAtr]          (shared pre-check)
  *   [M2] M15 TREND FILTER : Price vs M15 EMA200 — WITH the trend only
- *   [M3] EMA CROSS        : EMA5/EMA13 cross in signal direction (entry timing)
+ *   [M3] EMA ALIGNMENT    : EMA5/EMA13 aligned in signal direction + cross within 3 bars
  *
  *   SCORING (each adds 1 pt; need ≥ 2 of 4 to reach REQUIRED_SCORE=4):
  *   [S1] M5 TREND FILTER  : Price vs M5 EMA200 — dual-TF alignment
@@ -29,8 +29,8 @@ import CFG from '../../config.js';
 const str = CFG.strategy;
 const ind = CFG.indicator;
 
-// Min score to fire a signal: M2(+1) + M3(+1) + any 2 scoring gates(+2) = 4
-const REQUIRED_SCORE = 4;
+// Min score to fire a signal: M2(+1) + M3(+1) + any 1 scoring gate(+1) = 3
+const REQUIRED_SCORE = 3;
 
 // ── SignalGenerator ───────────────────────────────────────────────────────────
 
@@ -61,8 +61,8 @@ export class SignalGenerator {
       return null;
     }
 
-    const sellResult = this._evalDirection('sell', bar, prev, m15Candles);
-    const buyResult  = this._evalDirection('buy',  bar, prev, m15Candles);
+    const sellResult = this._evalDirection('sell', bar, prev, m5Candles, m15Candles);
+    const buyResult  = this._evalDirection('buy',  bar, prev, m5Candles, m15Candles);
 
     this.lastBar = { sell: sellResult, buy: buyResult };
 
@@ -89,7 +89,7 @@ export class SignalGenerator {
    * Score a single direction (buy or sell) against all gates.
    * Returns early with partial score if any mandatory gate fails.
    */
-  _evalDirection(direction, bar, prev, m15Candles) {
+  _evalDirection(direction, bar, prev, m5Candles, m15Candles) {
     const isSell  = direction === 'sell';
     const reasons = [];
     let score     = 0;
@@ -116,25 +116,38 @@ export class SignalGenerator {
       `M15 price(${m15bar.close}) ${isSell ? '<' : '>'} M15 EMA${ind.emaTrend}(${m15bar.emaTrend.toFixed(2)})`
     );
 
-    // [M3] M5 EMA5/EMA13 Cross — MANDATORY
-    // A stale cross is NOT a signal — we need the exact bar the cross fires.
-    if (bar.emaFast == null || bar.emaSlow == null ||
-        prev.emaFast == null || prev.emaSlow == null) {
+    // [M3] M5 EMA5/EMA13 Alignment + recent cross within 3 bars
+    // EMA must be crossed in the signal direction AND the cross must have occurred
+    // within the last 3 bars (15 min window) — not a stale cross from hours ago.
+    if (bar.emaFast == null || bar.emaSlow == null) {
       return { score, required: REQUIRED_SCORE, reasons: [...reasons, 'M5 EMA not computed'] };
     }
-    const crossedDown = (prev.emaFast >= prev.emaSlow) && (bar.emaFast < bar.emaSlow);
-    const crossedUp   = (prev.emaFast <= prev.emaSlow) && (bar.emaFast > bar.emaSlow);
-    const crossed     = isSell ? crossedDown : crossedUp;
-    if (!crossed) {
+    const emaAligned = isSell ? bar.emaFast < bar.emaSlow : bar.emaFast > bar.emaSlow;
+    if (!emaAligned) {
       return {
         score,
         required: REQUIRED_SCORE,
-        reasons : [...reasons, `No fresh EMA${ind.emaFast}/EMA${ind.emaSlow} cross ${isSell ? 'down' : 'up'}`],
+        reasons : [...reasons, `EMA${ind.emaFast} not ${isSell ? 'below' : 'above'} EMA${ind.emaSlow}`],
+      };
+    }
+    // Check that the cross happened within the last 3 bars (so we don't enter a stale trend mid-move)
+    const lookback = m5Candles.slice(-4);  // current bar + up to 3 bars before
+    const recentCross = lookback.some((b, i) => {
+      if (i === 0 || b.emaFast == null || lookback[i - 1].emaFast == null) return false;
+      return isSell
+        ? (lookback[i - 1].emaFast >= lookback[i - 1].emaSlow) && (b.emaFast < b.emaSlow)
+        : (lookback[i - 1].emaFast <= lookback[i - 1].emaSlow) && (b.emaFast > b.emaSlow);
+    });
+    if (!recentCross) {
+      return {
+        score,
+        required: REQUIRED_SCORE,
+        reasons : [...reasons, `EMA${ind.emaFast}/${ind.emaSlow} cross too stale (>3 bars ago)`],
       };
     }
     score++;
     reasons.push(
-      `EMA${ind.emaFast}(${bar.emaFast.toFixed(2)}) crossed ${isSell ? 'below' : 'above'} EMA${ind.emaSlow}(${bar.emaSlow.toFixed(2)})`
+      `EMA${ind.emaFast}(${bar.emaFast.toFixed(2)}) ${isSell ? 'below' : 'above'} EMA${ind.emaSlow}(${bar.emaSlow.toFixed(2)}) — recent cross`
     );
 
     // ── Scoring Gates (need ≥ 2 of the 4 below) ──────────────────────────────
@@ -186,7 +199,7 @@ export class SignalGenerator {
         prev.stochK != null && prev.stochD != null) {
       const stochCrossDown = (prev.stochK >= prev.stochD) && (bar.stochK < bar.stochD);
       const stochCrossUp   = (prev.stochK <= prev.stochD) && (bar.stochK > bar.stochD);
-      const stochInZone    = isSell ? bar.stochK > 70 : bar.stochK < 30;
+      const stochInZone    = isSell ? bar.stochK > ind.stochOb : bar.stochK < ind.stochOs;
       const stochHit       = isSell
         ? stochCrossDown && stochInZone
         : stochCrossUp   && stochInZone;

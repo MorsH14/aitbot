@@ -85,21 +85,34 @@ export class TradeExecutor {
     for (const contract of openContracts) {
       const contractId   = contract.contract_id;
       const direction    = contract.contract_type === 'MULTUP' ? 'buy' : 'sell';
-      const entryPrice   = contract.buy_price ? (contract.buy_price / contract.multiplier) : currentPrice;
+      // entry_spot is the gold spot price at contract entry (buy_price is the USD stake)
+      const entryPrice   = contract.entry_spot ?? currentPrice;
+      const stake        = contract.buy_price ?? 0;
+      const mult         = contract.multiplier || CFG.instrument.multiplier;
       const currentSlUsd = contract.limit_order?.stop_loss?.order_amount ?? null;
 
       if (!currentSlUsd) continue;
 
-      // Compute the new price-level SL using existing risk logic, then convert back to USD
-      const currentSlPrice = this._risk.calculateTrailingStop(
-        direction, entryPrice, currentPrice, currentAtr,
-        direction === 'buy'
-          ? entryPrice - (currentSlUsd / (contract.multiplier || CFG.instrument.multiplier))
-          : entryPrice + (currentSlUsd / (contract.multiplier || CFG.instrument.multiplier))
+      // Convert current SL USD amount → price level:
+      //   stopLossUsd = stake × mult × slDistance / entryPrice
+      //   → slDistance = stopLossUsd × entryPrice / (stake × mult)
+      const slDistance = (stake > 0 && entryPrice > 0)
+        ? (currentSlUsd * entryPrice) / (stake * mult)
+        : currentSlUsd / mult;
+      const currentSlPrice = direction === 'buy'
+        ? entryPrice - slDistance
+        : entryPrice + slDistance;
+
+      // Ask risk manager if the trail should move
+      const newSlPrice = this._risk.calculateTrailingStop(
+        direction, entryPrice, currentPrice, currentAtr, currentSlPrice
       );
 
-      const newSlDistance = Math.abs(entryPrice - currentSlPrice);
-      const newSlUsd      = newSlDistance * (contract.multiplier || CFG.instrument.multiplier);
+      // Convert new price-level SL back to USD amount
+      const newSlDistance = Math.abs(entryPrice - newSlPrice);
+      const newSlUsd = (stake > 0 && entryPrice > 0)
+        ? (stake * mult * newSlDistance) / entryPrice
+        : newSlDistance * mult;
 
       if (Math.abs(newSlUsd - currentSlUsd) > 0.01) {
         await this._modifyContractSl(contractId, newSlUsd);
