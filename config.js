@@ -55,7 +55,8 @@ const timeframe = {
   signalTf      : '5m',   // M5  — where signals fire (scalping TF)
   trendTf       : '15m',  // M15 — trend direction filter
   lookback      : 500,    // M5 candles to fetch (indicator warm-up + weekend buffer)
-  trendLookback : 300,    // M15 candles to fetch — must be > 200 for EMA200 warmup
+  trendLookback : 600,    // M15 slots to fetch — Deriv counts calendar slots (incl. weekends).
+                          // ~192 weekend M15 slots per weekend → need 600 to guarantee ≥200 trading bars.
 };
 
 // ── Technical Indicator Parameters ───────────────────────────────────────────

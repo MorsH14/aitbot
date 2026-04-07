@@ -141,8 +141,12 @@ async function runLive(mock = false) {
       const currentAtr   = latestBar.atr ?? 1.0;
       const m15Trend     = h1.at(-1)?.trendDir ?? 0;
       const trendLabel   = { 1: 'BULL', '-1': 'BEAR', 0: 'NEUTRAL' }[m15Trend] ?? '?';
+      const m15EmaReady  = h1.at(-1)?.emaTrend != null;
 
-      logger.debug(`XAU/USD: ${currentPrice} | ATR: ${currentAtr?.toFixed(2)} | M15: ${trendLabel}`);
+      logger.debug(
+        `XAU/USD: ${currentPrice} | ATR: ${currentAtr?.toFixed(2)} | M15: ${trendLabel} | ` +
+        `M15bars: ${h1.length} | M15 EMA200: ${m15EmaReady ? h1.at(-1).emaTrend.toFixed(2) : 'warmup'}`
+      );
 
       // ── F. Manage open trades (trailing stops) ─────────────────────────────
       const openTrades = await fetcher.getOpenTrades();
