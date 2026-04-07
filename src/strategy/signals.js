@@ -130,8 +130,8 @@ export class SignalGenerator {
         reasons : [...reasons, `EMA${ind.emaFast} not ${isSell ? 'below' : 'above'} EMA${ind.emaSlow}`],
       };
     }
-    // Check that the cross happened within the last 3 bars (so we don't enter a stale trend mid-move)
-    const lookback = m5Candles.slice(-4);  // current bar + up to 3 bars before
+    // Check that the cross happened within the last 5 bars (25 min window) — so we don't enter a stale trend mid-move
+    const lookback = m5Candles.slice(-6);  // current bar + up to 5 bars before
     const recentCross = lookback.some((b, i) => {
       if (i === 0 || b.emaFast == null || lookback[i - 1].emaFast == null) return false;
       return isSell
@@ -142,7 +142,7 @@ export class SignalGenerator {
       return {
         score,
         required: REQUIRED_SCORE,
-        reasons : [...reasons, `EMA${ind.emaFast}/${ind.emaSlow} cross too stale (>3 bars ago)`],
+        reasons : [...reasons, `EMA${ind.emaFast}/${ind.emaSlow} cross too stale (>5 bars ago)`],
       };
     }
     score++;
